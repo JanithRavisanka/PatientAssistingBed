@@ -5,6 +5,28 @@
 #include <NTPClient.h>
 #include <WiFiUdp.h>
 
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <LiquidCrystal_I2C.h>
+#include <OneWire.h>
+#include <DallasTemperature.h>
+
+
+//DHT sensor
+#define DHTTYPE DHT22
+uint8_t DHTPin = 12;
+DHT dht(DHTPin, DHTTYPE);
+float rTemperature; //room temperature
+float humidity;
+float tFahrenheit;
+
+//body temperature sensor
+float bodyTemp;
+const int bodyTempPin = 14;
+OneWire oneWire(bodyTempPin);
+
+DallasTemperature sensors(&oneWire);
+
 //Define credentials
 #define WIFI_SSID "Dialog 4G 577"
 #define WIFI_PASSWORD "4639000F"
@@ -21,9 +43,9 @@ NTPClient timeClient(ntpUDP, "pool.ntp.org", utcOffsetInSeconds);
 
 // Define Firebase Data object
 FirebaseData fbdo;
-
 FirebaseAuth auth;
 FirebaseConfig config;
+
 
 unsigned long dataMillis = 0;
 
@@ -87,6 +109,13 @@ void setup(){
     Firebase.reconnectWiFi(true);
 
     config.cfs.upload_callback = fcsUploadCallback;
+
+    //DHT sensor
+    pinMode(DHTPin, INPUT);
+    dht.begin();
+
+    //body temperature sensor
+    sensors.begin();
 }
 
 void loop(){
@@ -97,11 +126,36 @@ void loop(){
         //update time
         timeClient.update();
 
+        //DHT sensor
+        humidity = dht.readHumidity();
+        rTemperature = dht.readTemperature();
+
+        if (isnan(humidity) || isnan(rTemperature)) {
+            Serial.println(F("Failed to read from DHT sensor!"));
+        }
+        // Serial.print(F("Humidity: "));
+        // Serial.print(humidity);
+        // Serial.print(F("%  Temperature: "));
+        // Serial.print(rTemperature);
+        // Serial.print(F("°C "));
+        // Serial.print(tFahrenheit);
+        // Serial.println(F("°F "));
+        
+
+        //body temperature sensor
+        sensors.requestTemperatures();
+        bodyTemp = sensors.getTempCByIndex(0);
+        // Serial.print("Body Temperature: ");
+        // Serial.print(bodyTemp);
+        // Serial.println("°C");
+
+        // delay(10000);
+
         FirebaseJson content;
         String documentPath = PATIENT_NAME + String("/") + String(timeClient.getFormattedTime());
 
         content.set("fields/bpm/integerValue", random(50, 120));
-        content.set("fields/temp/doubleValue", random(380, 420) / 10.0);
+        content.set("fields/temp/doubleValue", bodyTemp);
 
         Serial.print("Create a document...");
         if (Firebase.Firestore.createDocument(&fbdo, FIREBASE_PROJECT_ID, "", documentPath.c_str(), content.raw()))
@@ -109,4 +163,9 @@ void loop(){
         else
             Serial.println(fbdo.errorReason());        
     }
+
+
+
+
+
 }
