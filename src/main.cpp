@@ -12,6 +12,8 @@
 #include <DallasTemperature.h>
 
 
+
+
 //DHT sensor
 #define DHTTYPE DHT22
 uint8_t DHTPin = 12;
@@ -24,6 +26,15 @@ float tFahrenheit;
 float bodyTemp;
 const int bodyTempPin = 14;
 OneWire oneWire(bodyTempPin);
+
+//HR sensor
+const int pulsePin = 0;
+int signal;
+int threshold = 600;
+unsigned long hrSampleInterval  =0; 
+int count = 0;
+int bpm = 0;
+unsigned long bpmInterval = 0;
 
 DallasTemperature sensors(&oneWire);
 
@@ -110,17 +121,38 @@ void setup(){
 
     config.cfs.upload_callback = fcsUploadCallback;
 
+
     //DHT sensor
     pinMode(DHTPin, INPUT);
     dht.begin();
 
     //body temperature sensor
     sensors.begin();
+
+    //HR sensor
+    hrSampleInterval = millis();
 }
 
 void loop(){
+  if(Firebase.ready()){
+    //HR sensorF
+    signal = analogRead(pulsePin);
+    if (signal > threshold && (millis() - hrSampleInterval > 400)){
+        count++;
+        hrSampleInterval = millis();
+    }
+    if(millis() - bpmInterval > 60000){
+        if (count == 0|| bpm - count > 30 || count - bpm > 30){
+            count = bpm;
+        }
+        bpm = count;
+        Serial.print("BPM: ");
+        Serial.println(count);
+        count = 0;
+        bpmInterval = millis();
+    }
     //after authentication in every loop runs after 6000ms
-    if(Firebase.ready() && (millis() -dataMillis > 6000 || dataMillis == 0 )){
+    if(Firebase.ready() && (millis() - dataMillis > 60100) && bpm != 0){
         dataMillis = millis();
 
         //update time
@@ -133,6 +165,7 @@ void loop(){
         if (isnan(humidity) || isnan(rTemperature)) {
             Serial.println(F("Failed to read from DHT sensor!"));
         }
+
         // Serial.print(F("Humidity: "));
         // Serial.print(humidity);
         // Serial.print(F("%  Temperature: "));
@@ -140,21 +173,21 @@ void loop(){
         // Serial.print(F("°C "));
         // Serial.print(tFahrenheit);
         // Serial.println(F("°F "));
-        
+
 
         //body temperature sensor
         sensors.requestTemperatures();
         bodyTemp = sensors.getTempCByIndex(0);
+
         // Serial.print("Body Temperature: ");
         // Serial.print(bodyTemp);
         // Serial.println("°C");
-
         // delay(10000);
 
         FirebaseJson content;
         String documentPath = PATIENT_NAME + String("/") + String(timeClient.getFormattedTime());
 
-        content.set("fields/bpm/integerValue", random(50, 120));
+        content.set("fields/bpm/integerValue", bpm);
         content.set("fields/temp/doubleValue", bodyTemp);
 
         Serial.print("Create a document...");
@@ -163,9 +196,14 @@ void loop(){
         else
             Serial.println(fbdo.errorReason());        
     }
+  }
+
 
 
 
 
 
 }
+
+
+   
