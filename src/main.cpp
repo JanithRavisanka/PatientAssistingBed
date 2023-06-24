@@ -10,7 +10,8 @@
 #include <OneWire.h>
 #include <DallasTemperature.h>
 #include <time.h> 
-
+#include "SinricPro.h"
+#include "SinricProSwitch.h"
 
 
 //DHT sensor
@@ -58,7 +59,38 @@ FirebaseAuth auth;
 FirebaseConfig config;
 
 
+//sinric
+#define APP_KEY           "c187674a-3a52-40d9-81d6-e9613391b6e4"
+#define APP_SECRET        "3ed12387-5077-4a28-a239-2477effc6ec6-e9a6343e-db20-42b0-804d-2c4395dec443"  
+#define SWITCH_ID         "648a0e1c929949c1da84cbcf"    
+const int touchPin = D2;      // Pin connected to the touch sensor (D2 on NodeMCU)
+const int motorPin1 = D6;    // Pin connected to IN1 of the motor driver (D6 on NodeMCU)
+const int motorPin2 = D7;    // Pin connected to IN2 of the motor driver (D7 on NodeMCU)
+bool motorRunning = false;
+unsigned long startTime = 0;
+bool isClockwise = true;
+
+
 unsigned long dataMillis = 0;
+
+//sinric power state callback function
+bool onPowerState(const String &deviceId, bool &state) {
+  if (state) {
+    digitalWrite(motorPin1, HIGH);
+    digitalWrite(motorPin2, LOW);
+    Serial.println("Motor started (clockwise)");
+    startTime = millis();
+    isClockwise = true;
+  } else {
+    digitalWrite(motorPin1, LOW);
+    digitalWrite(motorPin2, HIGH);
+    Serial.println("Motor started (counter-clockwise)");
+    startTime = millis();
+    isClockwise = false;
+  }
+  motorRunning = true;
+  return true;
+}
 
 
 // The Firestore payload upload callback function
@@ -85,7 +117,16 @@ void fcsUploadCallback(CFS_UploadStatusInfo info)
         Serial.printf("Upload failed, %s\n", info.errorMsg.c_str());
     }
 }
-String epochTimeConverter(unsigned long epochTime);
+
+//epoch time coverter function
+String epochTimeConverter(unsigned long epochTime){
+    time_t rawtime = epochTime; //
+    struct tm *ptm = gmtime(&rawtime); //convert to UTC
+    char utcTime[30];
+    sprintf(utcTime, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
+    Serial.println(utcTime);
+    return String(utcTime);
+}
 
 void setup(){
     Serial.begin(115200);
@@ -134,10 +175,18 @@ void setup(){
     hrSampleInterval = millis();
     unsigned long timestamp = timeClient.getEpochTime();
     Serial.println(timestamp);
+
+    //sinric
+    pinMode(motorPin1, OUTPUT);
+    pinMode(motorPin2, OUTPUT);
+    pinMode(touchPin, INPUT);
+    SinricProSwitch& mySwitch = SinricPro[SWITCH_ID];
+    mySwitch.onPowerState(onPowerState);
+    SinricPro.begin(APP_KEY, APP_SECRET);
 }
 
 void loop(){
-  if(Firebase.ready()){
+    if(Firebase.ready()){
     //HR sensorF
     signal = analogRead(pulsePin);
     if (signal > threshold && (millis() - hrSampleInterval > 400)){
@@ -195,15 +244,39 @@ void loop(){
               
     }
   }
+
+    //sinric
+    SinricPro.handle();
+    int touchState = digitalRead(touchPin);
+    if (!motorRunning && touchState == HIGH) {
+        delay(50);  // Debounce delay
+        if (!motorRunning && touchState == HIGH) {
+             // Toggle motor direction
+            isClockwise = !isClockwise;
+
+        if (isClockwise) {
+            digitalWrite(motorPin1, HIGH);
+            digitalWrite(motorPin2, LOW);
+            Serial.println("Motor started (clockwise)");
+        } else {
+            digitalWrite(motorPin1, LOW);
+            digitalWrite(motorPin2, HIGH);
+            Serial.println("Motor started (counter-clockwise)");
+        }
+
+        startTime = millis(); // Record the motor start time
+        motorRunning = true; // Set the motor running flag
+        }
+    } else if (motorRunning) {
+        // Stop the motor if the running duration has elapsed
+        if (millis() - startTime >= 15000) {
+            digitalWrite(motorPin1, LOW);
+            digitalWrite(motorPin2, LOW);
+            motorRunning = false; // Reset the motor running flag
+            Serial.println("Motor stopped");
+        }
+    }
 }
 
-//epoch time coverter function
-String epochTimeConverter(unsigned long epochTime){
-    time_t rawtime = epochTime; //
-    struct tm *ptm = gmtime(&rawtime); //convert to UTC
-    char utcTime[30];
-    sprintf(utcTime, "%d-%02d-%02dT%02d:%02d:%02dZ", ptm->tm_year + 1900, ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, ptm->tm_sec);
-    Serial.println(utcTime);
-    return String(utcTime);
-}
+
 
