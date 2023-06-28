@@ -12,11 +12,16 @@
 #include <time.h> 
 #include "SinricPro.h"
 #include "SinricProSwitch.h"
+#include <HX711_ADC.h>
+#include <Adafruit_Sensor.h>
+#include <DHT.h>
+#include <DHT_U.h>
+#define DHTTYPE DHT22   // DHT 22 (AM2302)
 
 
 //DHT sensor
 #define DHTTYPE DHT22
-uint8_t DHTPin = 12;
+const int DHTPin = D3;
 DHT dht(DHTPin, DHTTYPE);
 float rTemperature; //room temperature
 float humidity;
@@ -24,11 +29,11 @@ float tFahrenheit;
 
 //body temperature sensor
 float bodyTemp;
-const int bodyTempPin = 14;
+const int bodyTempPin = D0;
 OneWire oneWire(bodyTempPin);
 
 //HR sensor
-const int pulsePin = 0;
+const int pulsePin = A0;
 int signal;
 int threshold = 550;
 unsigned long hrSampleInterval  =0; 
@@ -63,12 +68,25 @@ FirebaseConfig config;
 #define APP_KEY           "c187674a-3a52-40d9-81d6-e9613391b6e4"
 #define APP_SECRET        "3ed12387-5077-4a28-a239-2477effc6ec6-e9a6343e-db20-42b0-804d-2c4395dec443"  
 #define SWITCH_ID         "648a0e1c929949c1da84cbcf"    
-const int touchPin = D2;      // Pin connected to the touch sensor (D2 on NodeMCU)
+const int touchPin = D8;      // Pin connected to the touch sensor (D2 on NodeMCU)
 const int motorPin1 = D6;    // Pin connected to IN1 of the motor driver (D6 on NodeMCU)
 const int motorPin2 = D7;    // Pin connected to IN2 of the motor driver (D7 on NodeMCU)
 bool motorRunning = false;
 unsigned long startTime = 0;
 bool isClockwise = true;
+
+
+// Pins fan + Load cell
+//DHT pin declared above 
+const int HX711_dout = D4;  // MCU > HX711 dout pin
+const int HX711_sck = D5;  // MCU > HX711 sck pin
+const int RELAYPIN = D3;    // MCU > LED pin
+
+// DHT_Unified dht(DHTPin, DHTTYPE);
+// HX711 constructor:
+HX711_ADC LoadCell(HX711_dout, HX711_sck);
+unsigned long t = 0;
+bool newDataReady = false;
 
 
 unsigned long dataMillis = 0;
@@ -128,6 +146,59 @@ String epochTimeConverter(unsigned long epochTime){
     return String(utcTime);
 }
 
+int isWeightDetected() {
+  const int serialPrintInterval = 0;
+
+  if (LoadCell.update())
+    newDataReady = true;
+
+  if (newDataReady) {
+    if (millis() > t + serialPrintInterval) {
+      float i = LoadCell.getData();
+      if (i > 400.0) {
+        return 1;
+      }
+      newDataReady = false;
+      t = millis();
+    }
+  }
+  return 0;
+}
+
+//to find over humidity or not
+int isOverHumidityFound() {
+  delay(10);
+
+  humidity = dht.readHumidity();
+  if (isnan(humidity)) {
+    Serial.println("Error reading humidity!");
+    return 0;
+  } else {
+    if (humidity >= 95.0) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+}
+
+int isOverTemperatureFound() {
+  delay(10);
+  rTemperature = dht.readTemperature();
+  if (isnan(rTemperature)) {
+    Serial.println(F("Error reading temperature!"));
+    return 0;
+  } else {
+    if (rTemperature >= 25.0) {
+      return 1;
+    } else {
+      return 0;
+    }
+  }
+}
+
+
+
 void setup(){
     Serial.begin(115200);
 
@@ -164,9 +235,28 @@ void setup(){
     config.cfs.upload_callback = fcsUploadCallback;
 
 
-    //DHT sensor
+    //DHT sensor +  relay + load cell
     pinMode(DHTPin, INPUT);
+    pinMode(RELAYPIN, OUTPUT);
     dht.begin();
+
+    LoadCell.begin();
+    float calibrationValue;
+    calibrationValue = -101.4;
+
+    unsigned long stabilizingtime = 2000;
+    boolean _tare = true;
+    LoadCell.start(stabilizingtime, _tare);
+    if (LoadCell.getTareTimeoutFlag()) {
+        Serial.println("Timeout, check MCU > HX711 wiring and pin designations");
+        while (1);
+    } else {
+        LoadCell.setCalFactor(calibrationValue);
+        Serial.println("Startup is complete");
+    }
+
+
+
 
     //body temperature sensor
     sensors.begin();
@@ -275,6 +365,17 @@ void loop(){
             motorRunning = false; // Reset the motor running flag
             Serial.println("Motor stopped");
         }
+    }
+
+    //relay + dht to on the fan 
+    int isWeight = isWeightDetected();
+    int isHumidity = isOverHumidityFound();
+    int isTemperature = isOverTemperatureFound();
+    
+    if ((isWeight == 1 && isHumidity == 1) || (isWeight == 1 && isTemperature == 1)) {
+        digitalWrite(RELAYPIN, HIGH);  // Turn on the relay
+    } else {
+        digitalWrite(RELAYPIN, LOW);   // Turn off the relay
     }
 }
 
