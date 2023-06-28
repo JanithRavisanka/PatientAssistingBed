@@ -19,6 +19,8 @@
 #define DHTTYPE DHT22   // DHT 22 (AM2302)
 
 
+
+
 //DHT sensor
 #define DHTTYPE DHT22
 const int DHTPin = D3;
