@@ -303,7 +303,7 @@ void loop(){
     }
     //after authentication in every loop runs after 6000ms (6s) but if the bpm is 0 it will not run (initially bpm is 0)
     //not sending data in initial stage
-    if(Firebase.ready() && (millis() - dataMillis > 60100) && bpm != 0){
+    if(Firebase.ready() && (millis() - dataMillis > 60100) && bpm != 0 && !(isnan(dht.readHumidity())) && !(isnan(dht.readTemperature()))){
         dataMillis = millis(); //reset the interval
         //update time
         timeClient.update();
